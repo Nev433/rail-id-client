@@ -6,7 +6,8 @@
     "declarationMap": true,
     "outDir": "dist",
     "rootDir": "src",
-    "strict": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
     "skipLibCheck": true
   },
