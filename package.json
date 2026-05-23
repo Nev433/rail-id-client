@@ -1,0 +1,13 @@
+{
+  "name": "rail-id-client",
+  "version": "0.1.0",
+  "description": "Shared Rail ID Service client for railML apps",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}
