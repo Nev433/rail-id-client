@@ -6,7 +6,7 @@ HTTP API and exposes typed models other workspace projects can consume.
 The workspace convention is for any project that touches Rail-ID-Service data
 to depend on this package rather than redefining `RailIdEntity` /
 `RailIdRelationship` shapes locally. See the workspace
-[CLAUDE.md](../CLAUDE.md) "Shared types" and "Cross-service integration"
+[CLAUDE.md](https://github.com/Nev433/rail-projects/blob/main/CLAUDE.md) "Shared types" and "Cross-service integration"
 sections for the bigger picture.
 
 ## What this is
@@ -112,4 +112,4 @@ which currently redefine the same `RailIdEntity` shape locally.
 
 - [Rail-ID-Service](https://github.com/Nev433/Rail-ID-Service) — the API this
   client talks to.
-- Workspace [CLAUDE.md](../CLAUDE.md) — Shared types, Cross-service integration.
+- Workspace [CLAUDE.md](https://github.com/Nev433/rail-projects/blob/main/CLAUDE.md) — Shared types, Cross-service integration.
