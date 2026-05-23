@@ -27,6 +27,14 @@ function normaliseIdentifiers(
   return identifiers;
 }
 
+/**
+ * Hard upper bound on pages fetched in a single sync. Belt-and-braces
+ * defence against a misbehaving server (e.g. one that returns the same
+ * page repeatedly, or never reports `total`). Each page is bounded by
+ * `pageSize`, so the absolute maximum is `MAX_SYNC_PAGES * pageSize`.
+ */
+const MAX_SYNC_PAGES = 1000;
+
 export async function syncEntities(
   client: RailIdHttpClient,
   options: SyncOptions = {},
@@ -34,8 +42,14 @@ export async function syncEntities(
   const { types, contexts, since, pageSize = 500 } = options;
   const all: Record<string, unknown>[] = [];
   let skip = 0;
+  let pages = 0;
 
   while (true) {
+    if (pages++ >= MAX_SYNC_PAGES) {
+      throw new Error(
+        `syncEntities aborted after ${MAX_SYNC_PAGES} pages (collected ${all.length} entities) — server may not be reporting a finite total or may be returning duplicate pages`,
+      );
+    }
     const { items, total } = await client.fetchEntityPage({
       limit: pageSize,
       skip,
@@ -44,7 +58,18 @@ export async function syncEntities(
       since,
     });
     all.push(...items);
-    if (items.length < pageSize || all.length >= total) break;
+
+    // Stop conditions, in order:
+    //   1. server returned nothing — definitely done (catches the case
+    //      where total is Infinity and the server returns an empty page
+    //      to signal end-of-stream)
+    //   2. server returned fewer items than requested — last page reached
+    //   3. we've collected at least `total` rows — reached the count the
+    //      server told us about
+    if (items.length === 0) break;
+    if (items.length < pageSize) break;
+    if (Number.isFinite(total) && all.length >= total) break;
+
     skip += pageSize;
   }
 
