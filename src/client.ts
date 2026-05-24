@@ -75,6 +75,40 @@ export class RailIdHttpClient {
   }
 
   /**
+   * Send a generic GET-by-default request to a path under `baseUrl` and
+   * decode the JSON body as `T`. Consumers reach for this when the
+   * target endpoint isn't covered by one of the higher-level helpers
+   * (`fetchEntityPage`, `batchRelationships`). Gets the same retry,
+   * timeout and error-shape behaviour as the typed methods.
+   *
+   * @example
+   *   const types = await client.request<RawType[]>('/types', undefined, 'types');
+   *   const health = await client.request<{ status: string }>('/health');
+   *
+   * @param path  path relative to `baseUrl`, starting with `/`
+   * @param init  optional fetch init (method, body, etc.) — headers are
+   *              merged with the client's defaults; do not pass headers
+   *              here unless you specifically need to override.
+   * @param label short description for log/error messages (default: path)
+   */
+  async request<T>(path: string, init?: RequestInit, label?: string): Promise<T> {
+    const url = `${this.baseUrl}${path}`;
+    const tag = label ?? path;
+    const res = await this.requestRaw(
+      url,
+      {
+        method: init?.method ?? 'GET',
+        ...init,
+        headers: { ...this.headers(), ...(init?.headers ?? {}) },
+      },
+      tag,
+    );
+    const text = await res.text();
+    if (!text) return [] as unknown as T;
+    return JSON.parse(text) as T;
+  }
+
+  /**
    * Internal `fetch` wrapper that retries on transient failures
    * (network errors, AbortSignal timeouts, and HTTP 408/425/429/5xx).
    * 4xx responses are returned without retry — the caller's request
@@ -86,7 +120,7 @@ export class RailIdHttpClient {
    * Throws `RailIdHttpError` on final failure, with the last upstream
    * status and the number of attempts made.
    */
-  private async request(
+  private async requestRaw(
     url: string,
     init: RequestInit,
     label: string,
@@ -150,7 +184,7 @@ export class RailIdHttpClient {
     if (params.contexts?.length) {
       for (const c of params.contexts) url.searchParams.append('context', c);
     }
-    const res = await this.request(
+    const res = await this.requestRaw(
       url.toString(),
       { headers: this.headers() },
       'fetching entities',
@@ -167,7 +201,7 @@ export class RailIdHttpClient {
 
   async batchRelationships(ids: string[]): Promise<BatchRelationshipsResult> {
     if (!ids.length) return {};
-    const res = await this.request(
+    const res = await this.requestRaw(
       `${this.baseUrl}/entities/batch-relationships`,
       {
         method: 'POST',
