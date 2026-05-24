@@ -3,7 +3,19 @@ import type { RailIdRelationship } from './models';
 export interface RailIdClientConfig {
   baseUrl: string;
   apiKey?: string;
+  /** Per-attempt timeout in ms. Default: 30 000. */
   timeout?: number;
+  /**
+   * Number of HTTP attempts per request before giving up.
+   * Default: 3. Use 1 to disable retries.
+   */
+  maxAttempts?: number;
+  /**
+   * Base delay in ms for the exponential-backoff schedule between
+   * retries. Default: 500. Attempts wait `backoffBaseMs * 2^n` (with a
+   * small jitter) before retrying.
+   */
+  backoffBaseMs?: number;
 }
 
 interface RawRelationship {
@@ -20,21 +32,107 @@ interface RawRelationship {
 
 export type BatchRelationshipsResult = Record<string, RawRelationship[]>;
 
+/**
+ * Thrown when an HTTP attempt fails. Wraps the upstream status and
+ * a short message so callers can `instanceof` check vs a generic Error.
+ */
+export class RailIdHttpError extends Error {
+  readonly status: number;
+  readonly attempts: number;
+  constructor(message: string, status: number, attempts: number) {
+    super(message);
+    this.name = 'RailIdHttpError';
+    this.status = status;
+    this.attempts = attempts;
+  }
+}
+
+const TRANSIENT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class RailIdHttpClient {
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
   private readonly timeout: number;
+  private readonly maxAttempts: number;
+  private readonly backoffBaseMs: number;
 
   constructor(config: RailIdClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.apiKey = config.apiKey;
-    this.timeout = config.timeout ?? 30000;
+    this.timeout = config.timeout ?? 30_000;
+    this.maxAttempts = Math.max(1, config.maxAttempts ?? 3);
+    this.backoffBaseMs = Math.max(0, config.backoffBaseMs ?? 500);
   }
 
   private headers(): Record<string, string> {
     const h: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.apiKey) h['x-api-key'] = this.apiKey;
     return h;
+  }
+
+  /**
+   * Internal `fetch` wrapper that retries on transient failures
+   * (network errors, AbortSignal timeouts, and HTTP 408/425/429/5xx).
+   * 4xx responses are returned without retry — the caller's request
+   * is the problem, retrying won't help.
+   *
+   * Backoff is exponential with light jitter:
+   *   wait = backoffBaseMs * 2^(attempt-1) * (0.5 + Math.random())
+   *
+   * Throws `RailIdHttpError` on final failure, with the last upstream
+   * status and the number of attempts made.
+   */
+  private async request(
+    url: string,
+    init: RequestInit,
+    label: string,
+  ): Promise<Response> {
+    let lastStatus = 0;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      try {
+        const res = await fetch(url, {
+          ...init,
+          signal: AbortSignal.timeout(this.timeout),
+        });
+        if (res.ok) return res;
+        lastStatus = res.status;
+        // Non-transient response: 4xx (other than 408/425/429) — don't retry.
+        if (!TRANSIENT_STATUSES.has(res.status)) {
+          throw new RailIdHttpError(
+            `HTTP ${res.status} ${label}`,
+            res.status,
+            attempt,
+          );
+        }
+        lastError = new RailIdHttpError(
+          `HTTP ${res.status} ${label} (attempt ${attempt}/${this.maxAttempts})`,
+          res.status,
+          attempt,
+        );
+      } catch (err) {
+        if (err instanceof RailIdHttpError && !TRANSIENT_STATUSES.has(err.status)) {
+          throw err;
+        }
+        lastError = err;
+        // Network errors and AbortSignal timeouts fall through to the retry path.
+      }
+      if (attempt < this.maxAttempts) {
+        const base = this.backoffBaseMs * 2 ** (attempt - 1);
+        const jittered = base * (0.5 + Math.random());
+        await sleep(jittered);
+      }
+    }
+    if (lastError instanceof RailIdHttpError) throw lastError;
+    const message =
+      lastError instanceof Error
+        ? `network error ${label} after ${this.maxAttempts} attempts: ${lastError.message}`
+        : `${label} failed after ${this.maxAttempts} attempts`;
+    throw new RailIdHttpError(message, lastStatus || 0, this.maxAttempts);
   }
 
   async fetchEntityPage(params: {
@@ -52,26 +150,32 @@ export class RailIdHttpClient {
     if (params.contexts?.length) {
       for (const c of params.contexts) url.searchParams.append('context', c);
     }
-    const res = await fetch(url.toString(), {
-      headers: this.headers(),
-      signal: AbortSignal.timeout(this.timeout),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status} fetching entities`);
-    const data = await res.json() as Record<string, unknown>;
-    const items = (Array.isArray(data) ? data : (data['items'] || data['entities'] || data['data'] || [])) as Record<string, unknown>[];
+    const res = await this.request(
+      url.toString(),
+      { headers: this.headers() },
+      'fetching entities',
+    );
+    const data = (await res.json()) as Record<string, unknown>;
+    const items = (
+      Array.isArray(data)
+        ? data
+        : data['items'] || data['entities'] || data['data'] || []
+    ) as Record<string, unknown>[];
     const total = (data['total'] ?? data['count'] ?? Infinity) as number;
     return { items, total };
   }
 
   async batchRelationships(ids: string[]): Promise<BatchRelationshipsResult> {
     if (!ids.length) return {};
-    const res = await fetch(`${this.baseUrl}/entities/batch-relationships`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({ ids }),
-      signal: AbortSignal.timeout(this.timeout),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status} fetching batch relationships`);
+    const res = await this.request(
+      `${this.baseUrl}/entities/batch-relationships`,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ ids }),
+      },
+      'fetching batch relationships',
+    );
     return res.json() as Promise<BatchRelationshipsResult>;
   }
 
