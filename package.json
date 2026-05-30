@@ -30,7 +30,9 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepare": "npm run build"
+    "prepare": "npm run bootstrap-deps && npm run build",
+    "_comment_bootstrap": "npm runs prepare when a consumer installs this package via `file:` ref, BEFORE running `npm install` inside the linked directory. That means devDeps (including tsc) are not yet present and `npm run build` would fail with `'tsc' is not recognized` / `tsc: command not found`. bootstrap-deps populates node_modules with --ignore-scripts first so we don't recurse into our own prepare. Re-runs are idempotent — npm install over a populated node_modules is a no-op. Mirrors the guard in rail-nest-common / rail-ng-common.",
+    "bootstrap-deps": "npm install --ignore-scripts --no-audit --no-fund"
   },
   "engines": {
     "node": ">=26.0.0"
