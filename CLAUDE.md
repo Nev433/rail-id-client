@@ -80,11 +80,11 @@ folder (the standard `~/Developer/` layout). It does **not** work for clones
 that don't have the sibling — a real follow-up.
 
 Current consumers:
-- [railML-Infrastructure](https://github.com/Nev433/railML-Infrastructure) — uses it in `RailIdController`.
+- [railML-Infrastructure](https://github.com/Nev433/railML-Infrastructure) — `SyncService` and `RailIdController`
+- [railML-Timetable](https://github.com/Nev433/railML-Timetable) — `SyncService`
+- [railML-Crew](https://github.com/Nev433/railML-Crew) — thin `RailIdClient` wrapper around `RailIdHttpClient`
 
-The workspace audit recommends adopting it across **railML-Crew**,
-**railML-Timetable**, **railML-RollingStock**, and **railML-StockCrewPlan**,
-which currently redefine the same `RailIdEntity` shape locally.
+**railML-RollingStock** and **railML-StockCrewPlan** have no Rail-ID integration today — no adoption needed.
 
 ## Conventions
 
